@@ -17,50 +17,86 @@ const genAI = geminiKey ? new GoogleGenerativeAI(geminiKey) : null;
 // Cache para evitar re-enriquecer frecuentemente
 const enrichmentCache: Record<string, { generalDesc: string; businessHelp: string }> = {};
 
+// Health check to verify env vars on Vercel
+app.get("/api/health", (req, res) => {
+  res.json({ 
+    status: "ok", 
+    hfTokenSet: !!process.env.Api_ProyectoIA,
+    geminiKeySet: !!(process.env.ProyectoIA_API_Key || process.env.GEMINI_API_KEY),
+    envKeys: Object.keys(process.env).filter(k => k.includes("Proyecto") || k.includes("GEMINI") || k.includes("Api"))
+  });
+});
+
 // API Proxy for Hugging Face with Enhancement
 app.get("/api/models", async (req, res) => {
   const { category } = req.query;
+  console.log(`[Backend] Fetching models for category: ${category}`);
   
-  const CATEGORY_MAP: Record<string, { pipeline_tag?: string; search?: string }> = {
-    "LLM":        { pipeline_tag: "text-generation" },
-    "MM":         { pipeline_tag: "image-to-text" }, // "image-to-text" es más común que "image-text-to-text"
-    "Vision":     { pipeline_tag: "text-to-image" },
-    "Audio":      { pipeline_tag: "text-to-speech" },
-    "Video":      { pipeline_tag: "text-to-video" },
-    "Translator": { pipeline_tag: "translation" },
-    "Search":     { pipeline_tag: "sentence-similarity" },
-    "Agent":      { search: "agent" },
-    "Legal":      { search: "legal" },
-  };
+    const CATEGORY_MAP: Record<string, { pipeline_tag?: string; search?: string }> = {
+      "LLM":        { pipeline_tag: "text-generation" },
+      "MM":         { pipeline_tag: "image-text-to-text" },
+      "Vision":     { pipeline_tag: "text-to-image" },
+      "Audio":      { pipeline_tag: "text-to-speech" },
+      "Video":      { pipeline_tag: "text-to-video" },
+      "Translator": { pipeline_tag: "translation" },
+      "Search":     { pipeline_tag: "sentence-similarity" },
+      "Agent":      { search: "agent" },
+      "Legal":      { search: "legal" },
+    };
 
-  const config = CATEGORY_MAP[category as string] || { pipeline_tag: "text-generation" };
-  
-  try {
+    const config = CATEGORY_MAP[category as string] || { pipeline_tag: "text-generation" };
+    
     const params = new URLSearchParams({
       sort: "downloads",
       direction: "-1",
-      limit: "6", // Pedimos 6 para quedarnos con 4-5
+      limit: "8",
     });
     if (config.pipeline_tag) params.set("pipeline_tag", config.pipeline_tag);
     if (config.search) params.set("search", config.search);
 
     const hfUrl = `https://huggingface.co/api/models?${params.toString()}`;
+    console.log(`[Backend] HF URL: ${hfUrl}`);
     
-    const hfResponse = await fetch(hfUrl, {
-      headers: hfToken ? { "Authorization": `Bearer ${hfToken}` } : {},
-      signal: AbortSignal.timeout(5000) // 5s timeout for HF
-    });
+    let hfData: any[] = [];
     
-    if (!hfResponse.ok) {
-      const errorText = await hfResponse.text();
-      console.error(`HF API Error: ${hfResponse.status}`, errorText);
-      return res.json([]);
+    const fetchHF = async (useToken: boolean) => {
+      const headers: Record<string, string> = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+      };
+      if (useToken && hfToken) {
+        headers["Authorization"] = `Bearer ${hfToken}`;
+      }
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 12000); // 12s timeout
+      
+      try {
+        const response = await fetch(hfUrl, { headers, signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (response.ok) return await response.json();
+        console.warn(`[Backend] HF status ${response.status} (useToken: ${useToken})`);
+        return null;
+      } catch (e) {
+        clearTimeout(timeoutId);
+        console.error(`[Backend] HF fetch error (useToken: ${useToken}):`, e);
+        return null;
+      }
+    };
+
+    // Try with token first
+    hfData = await fetchHF(true) || [];
+    
+    // If empty result and we have a token, maybe the token is restricted/bad, try without it
+    if (hfData.length === 0 && hfToken) {
+      console.log("[Backend] Retrying HF without token...");
+      hfData = await fetchHF(false) || [];
     }
 
-    const hfData = await hfResponse.json();
-    if (!hfData || !Array.isArray(hfData)) return res.json([]);
+    console.log(`[Backend] Resulting models: ${hfData.length}`);
 
-    // Enriquecer los modelos con Gemini en paralelo para evitar timeouts en Vercel
+    if (hfData.length === 0) return res.json([]);
+
+    // Enriquecer los modelos con Gemini en paralelo
     const enrichedResult = await Promise.all(hfData.slice(0, 4).map(async (hfModel) => {
       const modelId = hfModel.id;
       const author = modelId.split('/')[0] || "Comunidad";
