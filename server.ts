@@ -1,7 +1,7 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import "dotenv/config";
 
 async function startServer() {
@@ -14,7 +14,7 @@ async function startServer() {
   const hfToken = process.env.Api_ProyectoIA;
   const geminiKey = process.env.ProyectoIA_API_Key || process.env.GEMINI_API_KEY;
 
-  const ai = geminiKey ? new GoogleGenAI({ apiKey: geminiKey }) : null;
+  const genAI = geminiKey ? new GoogleGenerativeAI(geminiKey) : null;
 
   if (!geminiKey) {
     console.warn("WARNING: No Gemini API Key found (ProyectoIA_API_Key or GEMINI_API_KEY).");
@@ -74,8 +74,13 @@ async function startServer() {
         if (enrichmentCache[modelId]) {
           generalDesc = enrichmentCache[modelId].generalDesc;
           businessHelp = enrichmentCache[modelId].businessHelp;
-        } else if (ai) {
+        } else if (genAI) {
           try {
+            const model = genAI.getGenerativeModel({ 
+              model: "gemini-2.0-flash",
+              generationConfig: { responseMimeType: "application/json" }
+            });
+            
             const prompt = `Analiza el modelo de IA "${modelId}" de HuggingFace para la categoría "${category}".
 Responde ÚNICAMENTE con un JSON válido:
 {
@@ -83,14 +88,12 @@ Responde ÚNICAMENTE con un JSON válido:
   "businessHelp": "Dos frases sobre cómo ahorra tiempo o dinero a una empresa real (máx 40 palabras)"
 }`;
 
-            const result = await ai.models.generateContent({
-              model: "gemini-1.5-flash",
-              contents: [{ role: "user", parts: [{ text: prompt }] }],
-              config: { responseMimeType: "application/json" }
-            });
+            const result = await model.generateContent(prompt);
+            const response = await result.response;
+            const textBuffer = response.text();
 
-            if (result.text) {
-              const cleanJson = result.text.replace(/```json/g, "").replace(/```/g, "").trim();
+            if (textBuffer) {
+              const cleanJson = textBuffer.replace(/```json/g, "").replace(/```/g, "").trim();
               const aiData = JSON.parse(cleanJson);
               generalDesc = aiData.generalDesc || generalDesc;
               businessHelp = aiData.businessHelp || businessHelp;
