@@ -17,7 +17,7 @@ export interface DynamicModel {
 }
 
 // Inicialización de Gemini usando el nombre exacto del secreto del usuario
-const geminiKey = process.env["ProyectoIA API Key"] || process.env.GEMINI_API_KEY;
+const geminiKey = process.env.ProyectoIA_API_Key || process.env.GEMINI_API_KEY;
 const ai = new GoogleGenAI({ apiKey: geminiKey || "" });
 
 // Cache en memoria para la sesión
