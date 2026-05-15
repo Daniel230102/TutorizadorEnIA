@@ -543,11 +543,7 @@ export default function App() {
               <div>
                 <div className="hero-badge"><span className="badge-dot" />Plataforma empresarial de IA · 2026</div>
                 <h1 className="hero-title">Domina la<br /><span className="accent">Inteligencia</span><br /><span className="accent2">Artificial</span><br />Empresarial</h1>
-                <p className="hero-sub">Formación estratégica sobre modelos LLM, arquitecturas agénticas y optimización de prompts para la empresa moderna.</p>
-                <div className="hero-actions">
-                  <button className="btn-primary btn-lg" onClick={() => handlePage('models')}>Explorar modelos</button>
-                  <button className="btn-outline-lg" onClick={() => setVideoModalOpen(true)}>Ver vídeos explicativos</button>
-                </div>
+                <p className="hero-sub">Formación estratégica sobre modelos IA, arquitecturas agénticas y optimización de prompts para la empresa moderna.</p>
               </div>
             </section>
 
