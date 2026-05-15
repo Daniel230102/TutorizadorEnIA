@@ -1,29 +1,13 @@
 import express from "express";
-import path from "path";
-import fs from "fs";
-import { createServer as createViteServer } from "vite";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import "dotenv/config";
 
 const app = express();
 app.use(express.json());
 
-// API Keys from Secrets
 const hfToken = process.env.Api_ProyectoIA;
 const geminiKey = process.env.ProyectoIA_API_Key || process.env.GEMINI_API_KEY;
-
 const genAI = geminiKey ? new GoogleGenerativeAI(geminiKey) : null;
-
-// Cache en memoria (volátil en serverless)
-const enrichmentCache: Record<string, { generalDesc: string; businessHelp: string }> = {};
-
-app.get("/api/health", (req, res) => {
-  res.json({ 
-    status: "ok", 
-    hfTokenSet: !!process.env.Api_ProyectoIA,
-    geminiKeySet: !!(process.env.ProyectoIA_API_Key || process.env.GEMINI_API_KEY)
-  });
-});
 
 app.get("/api/models", async (req, res) => {
   try {
@@ -46,28 +30,24 @@ app.get("/api/models", async (req, res) => {
     const params = new URLSearchParams({
       sort: "downloads",
       direction: "-1",
-      limit: "12", // Pedimos mÃ¡s para asegurar que encontramos resultados filtrables
+      limit: "10",
     });
     if (config.pipeline_tag) params.set("pipeline_tag", config.pipeline_tag);
     if (config.search) params.set("search", config.search);
 
     const hfUrl = `https://huggingface.co/api/models?${params.toString()}`;
     
-    // ConfiguraciÃ³n de fetch con reintento y headers robustos
     const fetchHF = async (useToken: boolean) => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
-      
       try {
         const headers: Record<string, string> = { 
           "User-Agent": "Mozilla/5.0 (VercelServer; AI-Benchmark-Hub) AppleWebKit/537.36",
           "Accept": "application/json"
         };
         if (useToken && hfToken) headers["Authorization"] = `Bearer ${hfToken}`;
-        
         const response = await fetch(hfUrl, { headers, signal: controller.signal });
         clearTimeout(timeoutId);
-        
         if (response.ok) return await response.json();
         return null;
       } catch (e) {
@@ -77,16 +57,9 @@ app.get("/api/models", async (req, res) => {
     };
 
     let hfData = await fetchHF(true);
-    // Si falla con token o no hay, intentamos sin Ã©l
-    if (!hfData || hfData.length === 0) {
-      hfData = await fetchHF(false);
-    }
+    if (!hfData || hfData.length === 0) hfData = await fetchHF(false);
+    if (!hfData || !Array.isArray(hfData) || hfData.length === 0) return res.json([]);
 
-    if (!hfData || !Array.isArray(hfData) || hfData.length === 0) {
-      return res.json([]);
-    }
-
-    // Limitamos a 4 modelos para evitar timeouts de 10s en Vercel Hobby
     const enrichedResult = await Promise.all(hfData.slice(0, 4).map(async (hfModel) => {
       const modelId = hfModel.id;
       const author = modelId.split('/')[0] || "Comunidad";
@@ -94,10 +67,6 @@ app.get("/api/models", async (req, res) => {
       
       let generalDesc = `${hfModel.pipeline_tag || 'Modelo'} de ${author}.`;
       let businessHelp = "Solución de IA para optimizar procesos empresariales.";
-
-      if (enrichmentCache[modelId]) {
-        return { ...hfModel, generalDesc: enrichmentCache[modelId].generalDesc, businessHelp: enrichmentCache[modelId].businessHelp };
-      }
 
       if (genAI) {
         try {
@@ -110,23 +79,18 @@ app.get("/api/models", async (req, res) => {
             const aiData = JSON.parse(cleanJson);
             generalDesc = aiData.generalDesc || generalDesc;
             businessHelp = aiData.businessHelp || businessHelp;
-            enrichmentCache[modelId] = { generalDesc, businessHelp };
           }
         } catch (e) {}
       }
 
       const rawTags: string[] = hfModel.tags ?? [];
-      const cleanTags = rawTags
-        .filter(t => !["transformers", "pytorch", "safetensors"].includes(t))
-        .slice(0, 3);
-
       return {
         id: modelId,
         name: shortName,
         company: author,
         logo: author.charAt(0).toUpperCase(),
         type: category,
-        tags: cleanTags,
+        tags: rawTags.filter(t => !["transformers", "pytorch", "safetensors"].includes(t)).slice(0, 3),
         generalDesc,
         businessHelp,
         context: hfModel.pipeline_tag || "IA Hub",
@@ -137,33 +101,8 @@ app.get("/api/models", async (req, res) => {
 
     res.json(enrichedResult);
   } catch (error) {
-    res.status(500).json({ error: "Server Error" });
+    res.status(500).json({ error: "API Error" });
   }
 });
-
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    if (fs.existsSync(distPath)) {
-      app.use(express.static(distPath));
-      app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
-    }
-  }
-
-  const PORT = 3000;
-  if (!process.env.VERCEL) {
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server listening on port ${PORT}`);
-    });
-  }
-}
-
-startServer();
 
 export default app;
