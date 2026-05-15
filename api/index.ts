@@ -1,13 +1,10 @@
 import express from "express";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import "dotenv/config";
 
 const app = express();
 app.use(express.json());
 
 const hfToken = process.env.Api_ProyectoIA;
-const geminiKey = process.env.ProyectoIA_API_Key || process.env.GEMINI_API_KEY;
-const genAI = geminiKey ? new GoogleGenerativeAI(geminiKey) : null;
 
 app.get("/api/models", async (req, res) => {
   try {
@@ -60,46 +57,28 @@ app.get("/api/models", async (req, res) => {
     if (!hfData || hfData.length === 0) hfData = await fetchHF(false);
     if (!hfData || !Array.isArray(hfData) || hfData.length === 0) return res.json([]);
 
-    const enrichedResult = await Promise.all(hfData.slice(0, 4).map(async (hfModel) => {
+    const results = hfData.slice(0, 5).map((hfModel: any) => {
       const modelId = hfModel.id;
       const author = modelId.split('/')[0] || "Comunidad";
       const shortName = modelId.split('/')[1] || modelId;
-      
-      let generalDesc = `${hfModel.pipeline_tag || 'Modelo'} de ${author}.`;
-      let businessHelp = "Solución de IA para optimizar procesos empresariales.";
-
-      if (genAI) {
-        try {
-          const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-          const prompt = `Analiza "${modelId}" (${category}). JSON: {"generalDesc":"máx 10 pal","businessHelp":"una frase sobre ahorro"}`;
-          const result = await model.generateContent(prompt);
-          const responseText = result.response.text();
-          if (responseText) {
-            const cleanJson = responseText.replace(/```json|```/g, "").trim();
-            const aiData = JSON.parse(cleanJson);
-            generalDesc = aiData.generalDesc || generalDesc;
-            businessHelp = aiData.businessHelp || businessHelp;
-          }
-        } catch (e) {}
-      }
-
       const rawTags: string[] = hfModel.tags ?? [];
+      
       return {
         id: modelId,
         name: shortName,
         company: author,
         logo: author.charAt(0).toUpperCase(),
         type: category,
-        tags: rawTags.filter(t => !["transformers", "pytorch", "safetensors"].includes(t)).slice(0, 3),
-        generalDesc,
-        businessHelp,
+        tags: rawTags.filter((t: string) => !["transformers", "pytorch", "safetensors", "license:"].some(ex => t.includes(ex))).slice(0, 3),
+        generalDesc: `${hfModel.pipeline_tag || 'Modelo'} de ${author}.`,
+        businessHelp: "Cargando sugerencia empresarial...",
         context: hfModel.pipeline_tag || "IA Hub",
         likes: hfModel.likes || 0,
         downloads: hfModel.downloads || 0
       };
-    }));
+    });
 
-    res.json(enrichedResult);
+    res.json(results);
   } catch (error) {
     res.status(500).json({ error: "API Error" });
   }

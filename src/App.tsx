@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sun, Moon, Menu, X, Loader2, ExternalLink, AlertCircle } from 'lucide-react';
 import { fetchTopModelsFromHF, DynamicModel } from './services/aiModelService';
+import { enrichModelData } from './services/geminiService';
 
 // --- UTILS ---
 const shuffleArray = <T,>(array: T[]): T[] => {
@@ -435,6 +436,17 @@ export default function App() {
             setHfError(`No se encontraron modelos en HuggingFace para la categoría "${filter}". Mostrando solo modelos curados.`);
           }
           setDynamicModels(models);
+
+          // Enriquecimiento asíncrono uno a uno para no bloquear
+          models.forEach(async (m) => {
+            const enriched = await enrichModelData(m.id, filter);
+            if (enriched) {
+              setDynamicModels(current => current.map(item => 
+                item.id === m.id ? { ...item, ...enriched } : item
+              ));
+            }
+          });
+
         } catch (err) {
           setHfError('No se pudo conectar con HuggingFace Hub. Comprueba tu conexión o inténtalo de nuevo.');
           setDynamicModels([]);

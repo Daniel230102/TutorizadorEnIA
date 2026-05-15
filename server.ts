@@ -2,7 +2,6 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import "dotenv/config";
 
 const app = express();
@@ -10,18 +9,11 @@ app.use(express.json());
 
 // API Keys from Secrets
 const hfToken = process.env.Api_ProyectoIA;
-const geminiKey = process.env.ProyectoIA_API_Key || process.env.GEMINI_API_KEY;
-
-const genAI = geminiKey ? new GoogleGenerativeAI(geminiKey) : null;
-
-// Cache en memoria (volátil en serverless)
-const enrichmentCache: Record<string, { generalDesc: string; businessHelp: string }> = {};
 
 app.get("/api/health", (req, res) => {
   res.json({ 
     status: "ok", 
-    hfTokenSet: !!process.env.Api_ProyectoIA,
-    geminiKeySet: !!(process.env.ProyectoIA_API_Key || process.env.GEMINI_API_KEY)
+    hfTokenSet: !!process.env.Api_ProyectoIA
   });
 });
 
@@ -86,56 +78,29 @@ app.get("/api/models", async (req, res) => {
       return res.json([]);
     }
 
-    // Limitamos a 4 modelos para evitar timeouts de 10s en Vercel Hobby
-    const enrichedResult = await Promise.all(hfData.slice(0, 4).map(async (hfModel) => {
+    // Retornamos los datos básicos de HuggingFace para que el frontend los enriquezca
+    const results = hfData.slice(0, 5).map((hfModel: any) => {
       const modelId = hfModel.id;
       const author = modelId.split('/')[0] || "Comunidad";
       const shortName = modelId.split('/')[1] || modelId;
-      
-      let generalDesc = `${hfModel.pipeline_tag || 'Modelo'} de ${author}.`;
-      let businessHelp = "Solución de IA para optimizar procesos empresariales.";
-
-      if (enrichmentCache[modelId]) {
-        return { ...hfModel, generalDesc: enrichmentCache[modelId].generalDesc, businessHelp: enrichmentCache[modelId].businessHelp };
-      }
-
-      if (genAI) {
-        try {
-          const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-          const prompt = `Analiza "${modelId}" (${category}). JSON: {"generalDesc":"máx 10 pal","businessHelp":"una frase sobre ahorro"}`;
-          const result = await model.generateContent(prompt);
-          const responseText = result.response.text();
-          if (responseText) {
-            const cleanJson = responseText.replace(/```json|```/g, "").trim();
-            const aiData = JSON.parse(cleanJson);
-            generalDesc = aiData.generalDesc || generalDesc;
-            businessHelp = aiData.businessHelp || businessHelp;
-            enrichmentCache[modelId] = { generalDesc, businessHelp };
-          }
-        } catch (e) {}
-      }
-
       const rawTags: string[] = hfModel.tags ?? [];
-      const cleanTags = rawTags
-        .filter(t => !["transformers", "pytorch", "safetensors"].includes(t))
-        .slice(0, 3);
-
+      
       return {
         id: modelId,
         name: shortName,
         company: author,
         logo: author.charAt(0).toUpperCase(),
         type: category,
-        tags: cleanTags,
-        generalDesc,
-        businessHelp,
+        tags: rawTags.filter((t: string) => !["transformers", "pytorch", "safetensors", "license:"].some(ex => t.includes(ex))).slice(0, 3),
+        generalDesc: `${hfModel.pipeline_tag || 'Modelo'} de ${author}.`,
+        businessHelp: "Cargando sugerencia empresarial...",
         context: hfModel.pipeline_tag || "IA Hub",
         likes: hfModel.likes || 0,
         downloads: hfModel.downloads || 0
       };
-    }));
+    });
 
-    res.json(enrichedResult);
+    res.json(results);
   } catch (error) {
     res.status(500).json({ error: "Server Error" });
   }
